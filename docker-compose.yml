@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   postgres_dwh:
     image: postgres:15
@@ -47,6 +45,9 @@ services:
       "
     volumes:
       - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./scripts:/opt/airflow/scripts
+      - ./sql:/opt/airflow/sql
 
   airflow-webserver:
     image: apache/airflow:2.10.5
@@ -64,6 +65,8 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
+      - ./scripts:/opt/airflow/scripts
+      - ./sql:/opt/airflow/sql
 
   airflow-scheduler:
     image: apache/airflow:2.10.5
@@ -79,8 +82,11 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
+      - ./scripts:/opt/airflow/scripts
+      - ./sql:/opt/airflow/sql
 
 volumes:
   postgres_dwh_data:
   postgres_airflow_data:
+
 
