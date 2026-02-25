@@ -22,15 +22,23 @@ def random_ts(days_back=30):
     return datetime.now() - timedelta(days=random.randint(0, days_back))
 
 
+# =============================
+# LOAD REFERENCE IDS
+# =============================
+
 def load_reference_ids(cursor):
     cursor.execute("SELECT user_id FROM raw.users_raw")
-    users = [r[0] for r in cursor.fetchall()]
+    users = [str(r[0]) for r in cursor.fetchall()]
 
     cursor.execute("SELECT merchant_id FROM raw.merchants_raw")
-    merchants = [r[0] for r in cursor.fetchall()]
+    merchants = [str(r[0]) for r in cursor.fetchall()]
 
     return users, merchants
 
+
+# =============================
+# TRANSACTIONS
+# =============================
 
 def generate_transactions(cursor, users, merchants, n=50):
     rows = []
@@ -38,16 +46,29 @@ def generate_transactions(cursor, users, merchants, n=50):
     for i in range(n):
         tx_id = str(uuid.uuid4())
 
-        user_id = random.choice(users + [999999])  # edge: unknown user
-        merchant_id = random.choice(merchants + [888888])  # edge
+        # edge: unknown user
+        if users and random.random() > 0.1:
+            user_id = random.choice(users)
+        else:
+            user_id = str(uuid.uuid4())
+
+        # edge: unknown merchant
+        if merchants and random.random() > 0.1:
+            merchant_id = random.choice(merchants)
+        else:
+            merchant_id = str(uuid.uuid4())
 
         amount = random.choice([
             round(random.uniform(10, 500), 2),
-            None,          # edge: null amount
-            -50.0          # edge: negative
+            None,      # edge: null
+            -50.0      # edge: negative
         ])
 
-        currency = random.choice(["KZT", "USD", None])  # edge null
+        currency = random.choice([
+            "KZT",
+            "USD",
+            None       # edge: null currency
+        ])
 
         status = random.choice([
             "success",
@@ -58,24 +79,24 @@ def generate_transactions(cursor, users, merchants, n=50):
 
         tx_ts = random_ts()
 
-        rows.append(
-            (
-                tx_id,
-                user_id,
-                merchant_id,
-                amount,
-                currency,
-                status,
-                tx_ts,
-                "generator",
-                datetime.now().date(),
-                datetime.now(),
-            )
+        row = (
+            tx_id,
+            user_id,
+            merchant_id,
+            amount,
+            currency,
+            status,
+            tx_ts,
+            "generator",
+            datetime.now().date(),
+            datetime.now(),
         )
 
-        # 🔥 edge: дубликат transaction_id (редко)
+        rows.append(row)
+
+        # 🔥 edge: дубликат transaction_id
         if i == 5:
-            rows.append(rows[-1])
+            rows.append(row)
 
     insert_sql = """
         INSERT INTO raw.transactions_raw (
@@ -97,38 +118,44 @@ def generate_transactions(cursor, users, merchants, n=50):
     print(f"Inserted transactions: {len(rows)}")
 
 
+# =============================
+# EVENTS
+# =============================
+
 def generate_events(cursor, n=40):
     cursor.execute("SELECT transaction_id FROM raw.transactions_raw")
-    tx_ids = [r[0] for r in cursor.fetchall()]
+    tx_ids = [str(r[0]) for r in cursor.fetchall()]
 
     rows = []
 
-    for i in range(n):
+    for _ in range(n):
         event_id = str(uuid.uuid4())
 
-        tx_id = random.choice(tx_ids + ["missing_tx"])  # edge
+        # edge: событие без транзакции
+        if tx_ids and random.random() > 0.15:
+            tx_id = random.choice(tx_ids)
+        else:
+            tx_id = str(uuid.uuid4())
 
         event_type = random.choice([
             "created",
             "authorized",
             "captured",
-            "unknown_event"  # edge
+            "unknown_event"
         ])
 
-        event_ts = random_ts()
-
-        rows.append(
-            (
-                event_id,
-                tx_id,
-                event_type,
-                event_ts,
-                "{}",
-                "generator",
-                datetime.now().date(),
-                datetime.now(),
-            )
+        row = (
+            event_id,
+            tx_id,
+            event_type,
+            random_ts(),
+            "{}",
+            "generator",
+            datetime.now().date(),
+            datetime.now(),
         )
+
+        rows.append(row)
 
     insert_sql = """
         INSERT INTO raw.transaction_events_raw (
@@ -148,42 +175,48 @@ def generate_events(cursor, n=40):
     print(f"Inserted events: {len(rows)}")
 
 
+# =============================
+# REFUNDS
+# =============================
+
 def generate_refunds(cursor, n=20):
     cursor.execute("SELECT transaction_id FROM raw.transactions_raw")
-    tx_ids = [r[0] for r in cursor.fetchall()]
+    tx_ids = [str(r[0]) for r in cursor.fetchall()]
 
     rows = []
 
     for _ in range(n):
         refund_id = str(uuid.uuid4())
 
-        tx_id = random.choice(tx_ids + ["missing_tx"])  # edge
+        # edge: refund без транзакции
+        if tx_ids and random.random() > 0.15:
+            tx_id = random.choice(tx_ids)
+        else:
+            tx_id = str(uuid.uuid4())
 
         refund_amount = random.choice([
             round(random.uniform(5, 200), 2),
-            None  # edge
+            None
         ])
 
         status = random.choice([
             "success",
             "failed",
-            "strange_status"  # edge
+            "strange_status"
         ])
 
-        refund_ts = random_ts()
-
-        rows.append(
-            (
-                refund_id,
-                tx_id,
-                refund_amount,
-                status,
-                refund_ts,
-                "generator",
-                datetime.now().date(),
-                datetime.now(),
-            )
+        row = (
+            refund_id,
+            tx_id,
+            refund_amount,
+            status,
+            random_ts(),
+            "generator",
+            datetime.now().date(),
+            datetime.now(),
         )
+
+        rows.append(row)
 
     insert_sql = """
         INSERT INTO raw.refunds_raw (
@@ -202,6 +235,10 @@ def generate_refunds(cursor, n=20):
     cursor.executemany(insert_sql, rows)
     print(f"Inserted refunds: {len(rows)}")
 
+
+# =============================
+# MAIN
+# =============================
 
 def main():
     conn = get_connection()
@@ -223,3 +260,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
