@@ -24,6 +24,33 @@ def load_raw_to_stg_transactions():
     try:
         with conn.cursor() as cursor:
 
+            # -------------------------------------------------
+            # 1️⃣ WATERMARK — до какого момента уже загружали
+            # -------------------------------------------------
+            cursor.execute("""
+                SELECT COALESCE(MAX(load_ts), '1900-01-01'::timestamp)
+                FROM stg.transactions_stg
+            """)
+            max_loaded_ts = cursor.fetchone()[0]
+
+            print(f"🧭 Incremental watermark (max load_ts in stg): {max_loaded_ts}")
+
+            # -------------------------------------------------
+            # 2️⃣ СКОЛЬКО СТРОК КАНДИДАТОВ В RAW
+            # -------------------------------------------------
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM raw.transactions_raw
+                WHERE transaction_id IS NOT NULL
+                  AND load_ts > %s
+            """, (max_loaded_ts,))
+            raw_candidates = cursor.fetchone()[0]
+
+            print(f"📦 Raw rows eligible for incremental load: {raw_candidates}")
+
+            # -------------------------------------------------
+            # 3️⃣ ОСНОВНАЯ ЗАГРУЗКА
+            # -------------------------------------------------
             insert_sql = """
             INSERT INTO stg.transactions_stg (
                 transaction_id,
@@ -56,16 +83,22 @@ def load_raw_to_stg_transactions():
                        ) AS rn
                 FROM raw.transactions_raw
                 WHERE transaction_id IS NOT NULL
+                  AND load_ts > %s
             ) t
             WHERE rn = 1
             ON CONFLICT (transaction_id) DO NOTHING
             """
 
-            cursor.execute(insert_sql)
+            cursor.execute(insert_sql, (max_loaded_ts,))
+            inserted_rows = cursor.rowcount
 
-            print(
-                f"✅ Inserted rows into stg.transactions_stg: {cursor.rowcount}"
-            )
+            print(f"✅ Inserted rows into stg.transactions_stg: {inserted_rows}")
+
+            # -------------------------------------------------
+            # 4️⃣ СКОЛЬКО СКИПНУЛОСЬ (idempotency эффект)
+            # -------------------------------------------------
+            skipped_rows = raw_candidates - inserted_rows
+            print(f"⚠️ Skipped rows (duplicates/conflicts): {skipped_rows}")
 
     except Exception as e:
         print(f"❌ Error during raw -> stg.transactions load: {e}")
